@@ -34,7 +34,7 @@ namespace TicketSystemApi.Models
         public int? ServiceSatisfaction { get; set; }
         public int? StaffEfficiency { get; set; }
 
-        public List<int> VisitReasonValues { get; set; }
+       // public List<int> VisitReasonValues { get; set; }
         public List<string> VisitReason { get; set; }
 
         public string VisitorComments { get; set; }
