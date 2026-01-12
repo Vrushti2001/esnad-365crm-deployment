@@ -36,8 +36,10 @@ namespace TicketSystemApi.Controllers
 
                 var service = new CrmService().GetService1(username, password);
 
-                DateTime ksaNow = DateTime.UtcNow.AddHours(3);
-
+               // DateTime ksaNow = DateTime.UtcNow.AddHours(3);
+                var ksaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Arab Standard Time");
+                var ksaNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ksaTimeZone);
+                DateTime ksaStart;
                 // ===================== QUERY =====================
                 var query = new QueryExpression("new_visitor")
                 {
@@ -188,8 +190,8 @@ namespace TicketSystemApi.Controllers
                         Branch = v.FormattedValues.Contains("new_branch")
                             ? v.FormattedValues["new_branch"]
                             : null,
-
-                        CreatedOn = v.GetAttributeValue<DateTime>("createdon"),
+                        ModifiedOn = ConvertToKsaTime(v.GetAttributeValue<DateTime?>("modifiedon")),
+                        CreatedOn = ConvertToKsaTime(v.GetAttributeValue<DateTime>("createdon")),
 
                         ServiceSatisfaction = serviceSatisfaction,
                         StaffEfficiency = staffEfficiency,
@@ -230,7 +232,19 @@ namespace TicketSystemApi.Controllers
                 ? (T)av.Value
                 : default;
         }
+        private DateTime? ConvertToKsaTime(DateTime? utcDate)
+        {
+            if (!utcDate.HasValue)
+                return null;
 
+            TimeZoneInfo ksaZone =
+                TimeZoneInfo.FindSystemTimeZoneById("Arab Standard Time");
+
+            return TimeZoneInfo.ConvertTimeFromUtc(
+                DateTime.SpecifyKind(utcDate.Value, DateTimeKind.Utc),
+                ksaZone
+            );
+        }
         private static void ApplyDateFilter(
             QueryExpression query,
             string filter,

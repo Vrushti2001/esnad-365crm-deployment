@@ -13,7 +13,7 @@ namespace TicketSystemApi.Models
         public string AccountEmail { get; set; }
         public string CrNumber { get; set; }
         public string AccountPhone { get; set; }
-
+        
         public Guid? ContactId { get; set; }
         public string ContactName { get; set; }
         public string ContactEmail { get; set; }
@@ -27,8 +27,9 @@ namespace TicketSystemApi.Models
 
         public int? BranchValue { get; set; }
         public string Branch { get; set; }
+        public DateTime? CreatedOn { get; set; }
 
-        public DateTime CreatedOn { get; set; }
+        public DateTime? ModifiedOn { get; set; }
 
         // ===================== SURVEY =====================
         public int? ServiceSatisfaction { get; set; }
