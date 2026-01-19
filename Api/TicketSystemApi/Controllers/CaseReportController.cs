@@ -132,6 +132,7 @@ namespace TicketSystemApi.Controllers
                         ModifiedBy = e.GetAttributeValue<EntityReference>("modifiedby")?.Name,
                         Priority = e.FormattedValues.Contains("prioritycode") ? e.FormattedValues["prioritycode"] : null,
                         ResolutionDateTime = GetResolutionDateTime(e)?.ToString("yyyy-MM-dd HH:mm:ss"),
+                        SurveyCreatedOn = csat.surveyCreatedOn,
                         Customer_Satisfaction_Score = csat.Comment,
                         How_Satisfied_Are_You_With_How_The_Ticket_Was_Handled = csat.Score,
                         Was_the_Time_Taken_to_process_the_ticket_Appropriate = csat.AppropriateTimeTaken,
@@ -265,7 +266,7 @@ namespace TicketSystemApi.Controllers
                 duration.Seconds);
         }
 
-        private (int? Score, string Comment, string AppropriateTimeTaken, string ImprovementComment)
+        private (int? Score, string Comment, string AppropriateTimeTaken, string ImprovementComment, string surveyCreatedOn)
             GetCustomerSatisfactionFeedback(IOrganizationService service, Guid caseId)
         {
             var query = new QueryExpression("new_customersatisfactionscore")
@@ -273,7 +274,7 @@ namespace TicketSystemApi.Controllers
                 ColumnSet = new ColumnSet("new_customersatisfactionrating",
                                           "new_customersatisfactionscore",
                                           "new_wasthetimetakentoprocesstheticketappropri",
-                                          "new_comment"),
+                                          "new_comment","createdon"),
                 Criteria = new FilterExpression
                 {
                     Conditions = { new ConditionExpression("new_csatcase", ConditionOperator.Equal, caseId) }
@@ -283,12 +284,12 @@ namespace TicketSystemApi.Controllers
             var result = service.RetrieveMultiple(query);
             var record = result.Entities.FirstOrDefault();
             if (record == null)
-                return (null, null, null, null);
+                return (null, null, null, null,null);
 
             var score = record.GetAttributeValue<OptionSetValue>("new_customersatisfactionrating")?.Value;
             var comment = record.GetAttributeValue<string>("new_customersatisfactionscore");
             var improvementComment = record.GetAttributeValue<string>("new_comment");
-
+            string surveyCreatedOn = ConvertToKsaTime(record.GetAttributeValue<DateTime?>("createdon"))?.ToString("yyyy-MM-dd HH:mm:ss");
             string appropriateTimeTaken = null;
 
             if (record.FormattedValues.Contains("new_wasthetimetakentoprocesstheticketappropri"))
@@ -300,7 +301,7 @@ namespace TicketSystemApi.Controllers
                 appropriateTimeTaken = record.GetAttributeValue<string>("new_wasthetimetakentoprocesstheticketappropri");
             }
 
-            return (score, comment, appropriateTimeTaken, improvementComment);
+            return (score, comment, appropriateTimeTaken, improvementComment, surveyCreatedOn);
         }
 
         private Dictionary<string, Dictionary<string, object>> GetSlaDetailsWithTimestamps(IOrganizationService service, Guid caseId)
