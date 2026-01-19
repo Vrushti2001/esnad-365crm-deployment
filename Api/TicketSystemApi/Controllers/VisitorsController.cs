@@ -39,7 +39,7 @@ namespace TicketSystemApi.Controllers
                // DateTime ksaNow = DateTime.UtcNow.AddHours(3);
                 var ksaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Arab Standard Time");
                 var ksaNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ksaTimeZone);
-                DateTime ksaStart;
+               // DateTime ksaStart;
                 // ===================== QUERY =====================
                 var query = new QueryExpression("new_visitor")
                 {
@@ -125,6 +125,7 @@ namespace TicketSystemApi.Controllers
                     int? staffEfficiency = null;
                    // List<int> visitReasonValues = null;
                     string visitorComments = null;
+                    DateTime? surveyCreatedOn = null;
 
                     // Service satisfaction
                     if (v.Attributes.TryGetValue(
@@ -161,6 +162,25 @@ namespace TicketSystemApi.Controllers
                     {
                         visitorComments = cmVal.Value as string;
                     }
+                    //survey createdon
+                    if (v.Attributes.TryGetValue(
+                            "survey.createdon",
+                            out var coObj) &&
+                        coObj is AliasedValue coVal &&
+                        coVal.Value is DateTime dt)
+                    {
+                        surveyCreatedOn = dt;
+                    }
+                    if (surveyCreatedOn.HasValue)
+                    {
+                        TimeZoneInfo ksaZone =
+                            TimeZoneInfo.FindSystemTimeZoneById("Arab Standard Time");
+
+                        surveyCreatedOn = TimeZoneInfo.ConvertTimeFromUtc(
+                            DateTime.SpecifyKind(surveyCreatedOn.Value, DateTimeKind.Utc),
+                            ksaZone);
+                    }
+
 
                     records.Add(new VisitorDto
                     {
@@ -192,7 +212,7 @@ namespace TicketSystemApi.Controllers
                             : null,
                         ModifiedOn = ConvertToKsaTime(v.GetAttributeValue<DateTime?>("modifiedon")),
                         CreatedOn = ConvertToKsaTime(v.GetAttributeValue<DateTime>("createdon")),
-
+                        SurveyCreatedOn = surveyCreatedOn,
                         ServiceSatisfaction = serviceSatisfaction,
                         StaffEfficiency = staffEfficiency,
                        // VisitReasonValues = visitReasonValues,

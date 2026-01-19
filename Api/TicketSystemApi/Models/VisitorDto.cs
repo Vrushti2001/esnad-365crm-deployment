@@ -32,6 +32,7 @@ namespace TicketSystemApi.Models
         public DateTime? ModifiedOn { get; set; }
 
         // ===================== SURVEY =====================
+        public DateTime? SurveyCreatedOn { get; set; }
         public int? ServiceSatisfaction { get; set; }
         public int? StaffEfficiency { get; set; }
 
