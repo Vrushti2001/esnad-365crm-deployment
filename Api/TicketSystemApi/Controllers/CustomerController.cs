@@ -1,12 +1,12 @@
+using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Query;
 using System;
+using System.Configuration;
 using System.Linq;
 using System.Net;
 using System.Web.Http;
-using System.Configuration;
-using Microsoft.Xrm.Sdk;
-using Microsoft.Xrm.Sdk.Query;
-using TicketSystemApi.Services;
 using TicketSystemApi.Models;
+using TicketSystemApi.Services;
 
 namespace TicketSystemApi.Controllers
 {
@@ -20,6 +20,7 @@ namespace TicketSystemApi.Controllers
             _crmService = new CrmService();
         }
 
+        // ===================== GET /api/customers/by-ticket/{ticketNumber} =====================
         [HttpGet]
         [Route("by-ticket/{ticketNumber}")]
         public IHttpActionResult GetCustomerByTicket(string ticketNumber)
@@ -35,7 +36,11 @@ namespace TicketSystemApi.Controllers
                 return Content(HttpStatusCode.BadRequest,
                     ApiResponse<object>.Error("Ticket number is required."));
 
-            ticketNumber = ticketNumber.Trim().ToUpper();
+            // ✅ Only allow integer-like ticket numbers (any length), no KI prefix logic
+            var normalized = NormalizeTicketNumber(ticketNumber);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return Content(HttpStatusCode.BadRequest,
+                    ApiResponse<object>.Error("Ticket number must contain digits only."));
 
             try
             {
@@ -45,12 +50,12 @@ namespace TicketSystemApi.Controllers
                 {
                     ColumnSet = new ColumnSet("ticketnumber", "customerid", "incidentid"),
                     Criteria =
-            {
-                Conditions =
-                {
-                    new ConditionExpression("ticketnumber", ConditionOperator.Equal, ticketNumber)
-                }
-            }
+                    {
+                        Conditions =
+                        {
+                            new ConditionExpression("ticketnumber", ConditionOperator.Equal, normalized)
+                        }
+                    }
                 };
 
                 var result = service.RetrieveMultiple(query);
@@ -58,14 +63,13 @@ namespace TicketSystemApi.Controllers
 
                 if (incident == null)
                     return Content(HttpStatusCode.NotFound,
-                        ApiResponse<object>.Error($"No case found for ticket number: {ticketNumber}"));
+                        ApiResponse<object>.Error($"No case found for ticket number: {normalized}"));
 
                 if (!incident.Contains("customerid") || !(incident["customerid"] is EntityReference customerRef))
                     return Ok(ApiResponse<object>.Error("Customer is not linked with the specified case."));
 
                 Entity customer = null;
 
-                // Check whether the reference is Contact or Account
                 if (customerRef.LogicalName == "contact")
                 {
                     try
@@ -98,20 +102,17 @@ namespace TicketSystemApi.Controllers
                 if (customer == null)
                     return Ok(ApiResponse<object>.Error("Customer record could not be retrieved."));
 
-                if (customer == null)
-                    return Ok(ApiResponse<object>.Error("Customer record could not be retrieved."));
-
                 // 🔍 Check if feedback already exists for the case
                 var feedbackQuery = new QueryExpression("new_customersatisfactionscore")
                 {
                     ColumnSet = new ColumnSet("new_customersatisfactionscoreid"),
                     Criteria =
-            {
-                Conditions =
-                {
-                    new ConditionExpression("new_csatcase", ConditionOperator.Equal, incident.Id)
-                }
-            }
+                    {
+                        Conditions =
+                        {
+                            new ConditionExpression("new_csatcase", ConditionOperator.Equal, incident.Id)
+                        }
+                    }
                 };
 
                 var feedbackResult = service.RetrieveMultiple(feedbackQuery);
@@ -124,7 +125,7 @@ namespace TicketSystemApi.Controllers
                 return Ok(ApiResponse<object>.Success(new
                 {
                     CaseId = incident.Id,
-                    TicketNumber = ticketNumber,
+                    TicketNumber = normalized,
                     CustomerId = customer.Id,
                     FirstName = (customerRef.LogicalName == "contact") ? customer.GetAttributeValue<string>("firstname") : null,
                     LastName = (customerRef.LogicalName == "contact") ? customer.GetAttributeValue<string>("lastname") : null,
@@ -143,6 +144,7 @@ namespace TicketSystemApi.Controllers
             }
         }
 
+        // ===================== POST /api/customers/submit-feedback =====================
         [HttpPost]
         [Route("submit-feedback")]
         public IHttpActionResult SubmitCustomerFeedback([FromBody] CustomerFeedbackModel model)
@@ -172,12 +174,12 @@ namespace TicketSystemApi.Controllers
                 {
                     ColumnSet = new ColumnSet("new_customersatisfactionrating"),
                     Criteria =
-            {
-                Conditions =
-                {
-                    new ConditionExpression("new_csatcase", ConditionOperator.Equal, caseGuid)
-                }
-            }
+                    {
+                        Conditions =
+                        {
+                            new ConditionExpression("new_csatcase", ConditionOperator.Equal, caseGuid)
+                        }
+                    }
                 };
 
                 var existingFeedback = service.RetrieveMultiple(existingQuery);
@@ -187,19 +189,29 @@ namespace TicketSystemApi.Controllers
                         ApiResponse<object>.Error("Feedback already submitted for this case."));
                 }
 
-                // ✅ Create new feedback
+                // ✅ Validate TimeAppropriate
                 if (model.TimeAppropriate != 1 && model.TimeAppropriate != 2)
                     return Content(HttpStatusCode.BadRequest,
                         ApiResponse<object>.Error("Please answer whether the time taken was appropriate."));
 
-                var commentValue = string.IsNullOrWhiteSpace(model.Comment) ? "No comments added by customer" : model.Comment.Trim();
+                var commentValue = string.IsNullOrWhiteSpace(model.Comment)
+                    ? "No comments added by customer"
+                    : model.Comment.Trim();
+
+                // 🔍 Retrieve Case to find linked customer
+                var caseEntity = service.Retrieve("incident", caseGuid, new ColumnSet("customerid"));
+                if (!caseEntity.Contains("customerid"))
+                    return Ok(ApiResponse<object>.Error("No customer linked to this case."));
+
+                var customerRef = (EntityReference)caseEntity["customerid"];
 
                 var feedback = new Entity("new_customersatisfactionscore");
                 feedback["new_customersatisfactionrating"] = new OptionSetValue(model.Rating);
                 feedback["new_comment"] = commentValue;
-                feedback["new_customersatisfactionscore"] = commentValue;  // ⬅️ Additional field to store same comment
+                feedback["new_customersatisfactionscore"] = commentValue;
                 feedback["new_csatcase"] = new EntityReference("incident", caseGuid);
                 feedback["new_wasthetimetakentoprocesstheticketappropri"] = (model.TimeAppropriate == 1);
+                feedback["new_customer"] = new EntityReference(customerRef.LogicalName, customerRef.Id);
 
                 var feedbackId = service.Create(feedback);
 
@@ -214,6 +226,8 @@ namespace TicketSystemApi.Controllers
                     ApiResponse<object>.Error($"CRM error: {ex.Message}"));
             }
         }
+
+        // ===================== POST /api/customers/visitor-feedback =====================
         [HttpPost]
         [Route("visitor-feedback")]
         public IHttpActionResult SubmitVisitorFeedback([FromBody] VisitorFeedbackModel model)
@@ -224,8 +238,11 @@ namespace TicketSystemApi.Controllers
             if (authHeader == null || authHeader.Scheme != "Bearer" || authHeader.Parameter != expectedToken)
                 return Content(HttpStatusCode.Unauthorized, ApiResponse<object>.Error("Unauthorized - Invalid bearer token"));
 
-            if (model == null || (string.IsNullOrWhiteSpace(model.ContactId) && string.IsNullOrWhiteSpace(model.AccountId)))
-                return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("Either ContactId or AccountId is required."));
+            if (model == null || (string.IsNullOrWhiteSpace(model.ContactId) &&
+                                  string.IsNullOrWhiteSpace(model.AccountId) &&
+                                  string.IsNullOrWhiteSpace(model.VisitorId)))
+                return Content(HttpStatusCode.BadRequest,
+                    ApiResponse<object>.Error(" VisitorId,ContactId or AccountId is required."));
 
             try
             {
@@ -238,14 +255,13 @@ namespace TicketSystemApi.Controllers
                 {
                     Guid contactId = new Guid(model.ContactId);
 
-                    // Prevent duplicates
                     var existingQuery = new QueryExpression("new_satisfactionsurveysms")
                     {
                         ColumnSet = new ColumnSet("new_satisfactionsurveysmsid"),
                         Criteria =
-                {
-                    Conditions = { new ConditionExpression("new_satisfactionsurveycontact", ConditionOperator.Equal, contactId) }
-                }
+                        {
+                            Conditions = { new ConditionExpression("new_satisfactionsurveycontact", ConditionOperator.Equal, contactId) }
+                        }
                     };
                     if (service.RetrieveMultiple(existingQuery).Entities.Any())
                         return Content(HttpStatusCode.Conflict, ApiResponse<object>.Error("Feedback already submitted for this contact."));
@@ -253,7 +269,7 @@ namespace TicketSystemApi.Controllers
                     feedback["new_satisfactionsurveycontact"] = new EntityReference("contact", contactId);
                     linkedVia = "Contact";
                 }
-                // 🔹 Case 2: Account feedback → copy rep phone into feedback
+                // 🔹 Case 2: Account feedback
                 else if (!string.IsNullOrWhiteSpace(model.AccountId))
                 {
                     Guid accountId = new Guid(model.AccountId);
@@ -272,11 +288,30 @@ namespace TicketSystemApi.Controllers
                     feedback["new_youropinionmatterstouspleaseshareyourcom"] =
                         $"Representative Phone: {repPhone}, CR Number: {crNumber}";
 
-                    // ✅ FIX: link feedback to Account using the Account lookup field
                     feedback["new_satisfactionsurveycompany"] = new EntityReference("account", accountId);
 
                     linkedVia = "Account";
                 }
+
+                // 🔹 Visitor (mandatory)
+                if (string.IsNullOrWhiteSpace(model.VisitorId))
+                {
+                    return Content(HttpStatusCode.BadRequest,
+                        ApiResponse<object>.Error("VisitorId is required.Its Null"));
+                }
+
+                Guid VisitorId;
+                try
+                {
+                    VisitorId = new Guid(model.VisitorId);
+                }
+                catch
+                {
+                    return Content(HttpStatusCode.BadRequest,
+                        ApiResponse<object>.Error("Invalid VisitorId format."));
+                }
+
+                feedback["new_satisfactionsurveyvisitor"] = new EntityReference("new_visitor", VisitorId);
 
                 // 🔹 Common fields
                 if (model.ServiceSatisfaction >= 1 && model.ServiceSatisfaction <= 5)
@@ -289,14 +324,9 @@ namespace TicketSystemApi.Controllers
                     feedback["new_helpusbetterunderstandwhyyouchosetovisitt"] =
                         new OptionSetValueCollection(model.Reasons.Select(r => new OptionSetValue(r)).ToList());
 
-                // ✅ Account Name only
-               // feedback["new_name"] = accName;
-
-                // ✅ Specify Other → goes only into "Specify other" field
                 if (!string.IsNullOrWhiteSpace(model.SpecifyOther))
                     feedback["new_name"] = model.SpecifyOther.Trim();
 
-                // ✅ Opinion → goes only into "Your opinion matters..." field
                 if (!string.IsNullOrWhiteSpace(model.Opinion))
                     feedback["new_youropinionmatterstouspleaseshareyourcom"] = model.Opinion.Trim();
 
@@ -314,6 +344,244 @@ namespace TicketSystemApi.Controllers
             }
         }
 
+        // ===================== GET /api/customers/ki-ticket/{ticketNumber} =====================
+        [HttpGet]
+        [Route("ki-ticket/{ticketNumber}")]
+        public IHttpActionResult GetTicket(string ticketNumber)
+        {
+            if (string.IsNullOrWhiteSpace(ticketNumber))
+                return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("TicketNumber is required"));
+
+            try
+            {
+                var service = _crmService.GetService();
+
+                // ✅ Only integer-like, any length, no KI prefix, no padding
+                var normalized = NormalizeTicketNumber(ticketNumber);
+                if (string.IsNullOrWhiteSpace(normalized))
+                    return Content(HttpStatusCode.BadRequest,
+                        ApiResponse<object>.Error("TicketNumber must contain digits only."));
+
+                var q = new QueryExpression("incident")
+                {
+                    ColumnSet = new ColumnSet("incidentid", "ticketnumber", "customerid"),
+                    Criteria =
+                    {
+                        Conditions =
+                        {
+                            new ConditionExpression("ticketnumber", ConditionOperator.Equal, normalized)
+                        }
+                    }
+                };
+
+                var incidents = service.RetrieveMultiple(q);
+                if (!incidents.Entities.Any())
+                    return Content(HttpStatusCode.NotFound,
+                        ApiResponse<object>.Error($"Ticket Number not found: {normalized}"));
+
+                var inc = incidents.Entities.First();
+                var result = new
+                {
+                    CaseId = inc.Id,
+                    TicketNumber = inc.GetAttributeValue<string>("ticketnumber"),
+                    CustomerId = (Guid?)null,
+                    CustomerLogicalName = (string)null,
+                    CustomerName = (string)null
+                };
+
+                if (inc.Contains("customerid") && inc["customerid"] is EntityReference cre)
+                {
+                    var custId = cre.Id;
+                    var logical = cre.LogicalName;
+                    string custName = null;
+
+                    if (logical == "account")
+                    {
+                        var acc = service.Retrieve("account", custId, new ColumnSet("name"));
+                        custName = acc.GetAttributeValue<string>("name");
+                    }
+                    else if (logical == "contact")
+                    {
+                        var con = service.Retrieve("contact", custId, new ColumnSet("fullname", "firstname", "lastname"));
+                        custName = con.GetAttributeValue<string>("fullname")
+                                  ?? $"{con.GetAttributeValue<string>("firstname")} {con.GetAttributeValue<string>("lastname")}".Trim();
+                    }
+
+                    return Ok(ApiResponse<object>.Success(new
+                    {
+                        CaseId = inc.Id,
+                        TicketNumber = inc.GetAttributeValue<string>("ticketnumber"),
+                        CustomerId = custId,
+                        CustomerLogicalName = logical,
+                        CustomerName = custName
+                    }, "Ticket found"));
+                }
+
+                // no customer set
+                return Ok(ApiResponse<object>.Success(result, "Ticket found (no customer)"));
+            }
+            catch (Exception ex)
+            {
+                return Content(HttpStatusCode.InternalServerError,
+                    ApiResponse<object>.Error("CRM error (GetTicket): " + ex.Message));
+            }
+        }
+
+        // ===================== POST /api/customers/submit-ki-feedback =====================
+        // OLD
+        // [HttpPost]
+        // [Route("submit-ki-feedback")]
+
+        // ==================================
+        // 🔥 Submit KI Feedback (WORKING)
+        // ==================================
+        [HttpPost]
+        [Route("submit-ki-feedback")]
+        [Route("submitkifeedback")]   // Optional shortcut route
+        public IHttpActionResult SubmitKIFeedback([FromBody] KICustomerFeedbackModel model)
+        {
+            var authHeader = Request.Headers.Authorization;
+            string expectedToken = ConfigurationManager.AppSettings["ApiBearerToken"];
+
+            // 🔐 Validate token
+            if (authHeader == null || authHeader.Scheme != "Bearer" || authHeader.Parameter != expectedToken)
+                return Content(HttpStatusCode.Unauthorized,
+                    ApiResponse<object>.Error("Unauthorized - Invalid bearer token"));
+
+            if (model == null)
+                return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("Invalid payload"));
+
+            try
+            {
+                var service = _crmService.GetService();
+
+                // 📌 Ticket handling – just digits allowed
+                string normalizedTicket = null;
+                if (!string.IsNullOrWhiteSpace(model.TicketNumber))
+                {
+                    normalizedTicket = NormalizeTicketNumber(model.TicketNumber);
+                    if (normalizedTicket == null)
+                        return Content(HttpStatusCode.BadRequest,
+                            ApiResponse<object>.Error("TicketNumber must contain digits only."));
+                }
+
+                Guid incidentId = Guid.Empty;
+
+                // If CaseId given use it first
+                if (!string.IsNullOrWhiteSpace(model.CaseId))
+                {
+                    if (!Guid.TryParse(model.CaseId, out incidentId))
+                        return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("Invalid CaseId GUID"));
+                }
+                else
+                {
+                    if (normalizedTicket == null)
+                        return Content(HttpStatusCode.BadRequest,
+                            ApiResponse<object>.Error("TicketNumber is required."));
+
+                    var q = new QueryExpression("incident")
+                    {
+                        ColumnSet = new ColumnSet("incidentid", "ticketnumber", "customerid"),
+                        Criteria =
+                {
+                    Conditions =
+                    {
+                        new ConditionExpression("ticketnumber", ConditionOperator.Equal, normalizedTicket)
+                    }
+                }
+                    };
+
+                    var incidents = service.RetrieveMultiple(q);
+                    if (!incidents.Entities.Any())
+                        return Content(HttpStatusCode.NotFound,
+                            ApiResponse<object>.Error($"Ticket Number not found: {normalizedTicket}"));
+
+                    var inc = incidents.Entities.First();
+                    incidentId = inc.Id;
+
+                    // Auto attach customer
+                    if (inc.Contains("customerid") && inc["customerid"] is EntityReference cre)
+                    {
+                        model.CustomerId = model.CustomerId ?? cre.Id.ToString();
+                        model.CustomerLogicalName = model.CustomerLogicalName ?? cre.LogicalName;
+                    }
+                }
+
+                // ⚠ Duplicate check
+                var dupQ = new QueryExpression("new_satisfactionsurvey")   // ← CORRECT LOGICAL NAME
+                {
+                    ColumnSet = new ColumnSet("new_satisfactionsurveyid"),
+                    Criteria =
+            {
+                Conditions =
+                {
+                    new ConditionExpression("new_ticket", ConditionOperator.Equal, incidentId)
+                }
+            }
+                };
+                var dupRes = service.RetrieveMultiple(dupQ);
+                if (dupRes.Entities.Any())
+                    return Content(HttpStatusCode.Conflict,
+                        ApiResponse<object>.Error("Feedback already submitted for this ticket."));
+
+                // Create feedback record
+                var feedback = new Entity("new_satisfactionsurvey");   // ← CORRECT
+
+                var comment = string.IsNullOrWhiteSpace(model.Comment)
+                    ? "No comments added by customer"
+                    : model.Comment.Trim();
+
+                feedback["new_satisfactionsurvey"] = comment;
+                feedback["new_doyouhaveanyothersuggestionsandorcomments"] = comment;
+
+                // ⭐ Set all rating attributes dynamically
+                if (model.Ratings != null)
+                {
+                    foreach (var kv in model.Ratings)
+                    {
+                        if (string.IsNullOrWhiteSpace(kv.Key)) continue;
+                        if (kv.Value < 1 || kv.Value > 5) continue;
+                        feedback[kv.Key] = new OptionSetValue(kv.Value);
+                    }
+                }
+
+                // Rating for time
+                if (model.TimeAppropriate == 1 || model.TimeAppropriate == 2)
+                    feedback["new_howsatisfiedareyouwiththetimetakentoresol"] = new OptionSetValue(model.TimeAppropriate);
+
+
+                // SET LOOKUPS
+                if (incidentId != Guid.Empty)
+                    feedback["new_ticket"] = new EntityReference("incident", incidentId);
+
+                if (!string.IsNullOrWhiteSpace(model.CustomerId) &&
+                    !string.IsNullOrWhiteSpace(model.CustomerLogicalName) &&
+                    Guid.TryParse(model.CustomerId, out Guid custGuid))
+                {
+                    if (model.CustomerLogicalName == "account")
+                        feedback["new_company"] = new EntityReference("account", custGuid);
+                    if (model.CustomerLogicalName == "contact")
+                        feedback["new_contact"] = new EntityReference("contact", custGuid);
+                }
+
+                var createdId = service.Create(feedback);
+
+                return Ok(ApiResponse<object>.Success(new
+                {
+                    SurveyId = createdId,
+                    Ticket = normalizedTicket ?? model.TicketNumber,
+                    CaseId = incidentId
+                }, "KI feedback submitted successfully"));
+            }
+            catch (Exception ex)
+            {
+                return Content(HttpStatusCode.InternalServerError,
+                    ApiResponse<object>.Error($"CRM error: {ex.Message}"));
+            }
+        }
+
+
+        // ===================== GET /api/customers/by-visitor-number/{visitorNumber} =====================
         [HttpGet]
         [Route("by-visitor-number/{visitorNumber}")]
         public IHttpActionResult GetCustomerByVisitorNumber(string visitorNumber)
@@ -331,16 +599,15 @@ namespace TicketSystemApi.Controllers
             {
                 var service = _crmService.GetService();
 
-                // 🔹 Query visitor by new_visitornumber
                 var query = new QueryExpression("new_visitor")
                 {
                     ColumnSet = new ColumnSet("new_visitorid", "new_visitornumber", "new_contactname", "new_companyname"),
                     Criteria = new FilterExpression
                     {
                         Conditions =
-                {
-                    new ConditionExpression("new_visitornumber", ConditionOperator.Equal, visitorNumber)
-                }
+                        {
+                            new ConditionExpression("new_visitornumber", ConditionOperator.Equal, visitorNumber)
+                        }
                     }
                 };
 
@@ -403,9 +670,259 @@ namespace TicketSystemApi.Controllers
             }
             catch (Exception ex)
             {
+                return Content(HttpStatusCode.InternalServerError,
+                    ApiResponse<object>.Error($"CRM error: {ex.Message}"));
+            }
+        }
+        // ===================== GET /api/keyinvestors/by-reference-number/{referenceNumber} =====================
+        [HttpGet]
+        [Route("by-reference-number/{referenceNumber}")]
+        public IHttpActionResult GetByReferenceNumber(string referenceNumber)
+        {
+            var authHeader = Request.Headers.Authorization;
+            string expectedToken = ConfigurationManager.AppSettings["ApiBearerToken"];
+
+            if (authHeader == null || authHeader.Scheme != "Bearer" || authHeader.Parameter != expectedToken)
+                return Content(HttpStatusCode.Unauthorized, ApiResponse<object>.Error("Unauthorized - Invalid bearer token"));
+
+            if (string.IsNullOrWhiteSpace(referenceNumber))
+                return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("Reference number is required."));
+
+            try
+            {
+                var service = _crmService.GetService();
+
+                // Query new_keyinvestorscommunication by new_referencenumber
+                var query = new QueryExpression("new_keyinvestorscommunication")
+                {
+                    ColumnSet = new ColumnSet("new_keyinvestorscommunicationid", "new_referencenumber", "new_investor"),
+                    Criteria = new FilterExpression
+                    {
+                        Conditions =
+                        {
+                            new ConditionExpression("new_referencenumber", ConditionOperator.Equal, referenceNumber)
+                        }
+                    }
+                };
+
+                var results = service.RetrieveMultiple(query);
+
+                if (results.Entities.Count == 0)
+                    return Content(HttpStatusCode.NotFound, ApiResponse<object>.Error($"No Key Investors Communication found with reference number: {referenceNumber}"));
+
+                // choose first match (adjust if you need different business logic)
+                var record = results.Entities.First();
+                var recordId = record.Id;
+                var investorRef = record.GetAttributeValue<EntityReference>("new_investor");
+
+                if (investorRef == null)
+                {
+                    return Content(HttpStatusCode.NotFound, ApiResponse<object>.Error("Record has no linked investor (new_investor)."));
+                }
+
+                if (investorRef.LogicalName == "contact")
+                {
+                    var contact = service.Retrieve("contact", investorRef.Id,
+                        new ColumnSet("contactid", "fullname", "firstname", "lastname", "emailaddress1", "mobilephone", "statuscode", "createdon"));
+
+                    return Ok(ApiResponse<object>.Success(new
+                    {
+                        RecordId = recordId,
+                        ReferenceNumber = referenceNumber,
+                        EntityType = "Contact",
+                        ContactId = contact.Id,
+                        FullName = contact.GetAttributeValue<string>("fullname"),
+                        FirstName = contact.GetAttributeValue<string>("firstname"),
+                        LastName = contact.GetAttributeValue<string>("lastname"),
+                        Email = contact.GetAttributeValue<string>("emailaddress1"),
+                        MobilePhone = contact.GetAttributeValue<string>("mobilephone"),
+                        Status = contact.FormattedValues.ContainsKey("statuscode") ? contact.FormattedValues["statuscode"] : null,
+                        CreatedOn = contact.GetAttributeValue<DateTime?>("createdon")
+                    }, "Contact retrieved successfully"));
+                }
+                else if (investorRef.LogicalName == "account")
+                {
+                    var account = service.Retrieve("account", investorRef.Id,
+                        new ColumnSet("accountid", "name", "emailaddress1", "telephone1", "new_crnumber", "statuscode", "createdon"));
+
+                    return Ok(ApiResponse<object>.Success(new
+                    {
+                        RecordId = recordId,
+                        ReferenceNumber = referenceNumber,
+                        EntityType = "Account",
+                        AccountId = account.Id,
+                        Name = account.GetAttributeValue<string>("name"),
+                        Email = account.GetAttributeValue<string>("emailaddress1"),
+                        RepresentativePhone = account.GetAttributeValue<string>("telephone1"),
+                        CRNumber = account.GetAttributeValue<string>("new_crnumber"),
+                        Status = account.FormattedValues.ContainsKey("statuscode") ? account.FormattedValues["statuscode"] : null,
+                        CreatedOn = account.GetAttributeValue<DateTime?>("createdon")
+                    }, "Account retrieved successfully"));
+                }
+                else
+                {
+                    return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error($"Unsupported investor lookup type: {investorRef.LogicalName}"));
+                }
+            }
+            catch (Exception ex)
+            {
                 return Content(HttpStatusCode.InternalServerError, ApiResponse<object>.Error($"CRM error: {ex.Message}"));
             }
         }
+        // ===================== POST /api/keyinvestors/feedback =====================
+        [HttpPost]
+        [Route("keyinvestors/feedback")]
+        public IHttpActionResult SubmitFeedback([FromBody] KeyInvestorFeedbackModel model)
+        {
+            var authHeader = Request.Headers.Authorization;
+            string expectedToken = ConfigurationManager.AppSettings["ApiBearerToken"];
+
+            if (authHeader == null || authHeader.Scheme != "Bearer" || authHeader.Parameter != expectedToken)
+                return Content(HttpStatusCode.Unauthorized, ApiResponse<object>.Error("Unauthorized - Invalid bearer token"));
+
+            if (model == null || string.IsNullOrWhiteSpace(model.ReferenceRecordId))
+                return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("ReferenceRecordId is required."));
+
+            // At least one of ContactId or AccountId must be provided
+            if (string.IsNullOrWhiteSpace(model.ContactId) && string.IsNullOrWhiteSpace(model.AccountId))
+                return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("ContactId or AccountId is required."));
+
+            try
+            {
+                var service = _crmService.GetService();
+
+                var survey = new Entity("new_communicationsatisfactionsurvey");
+                string linkedVia = "";
+
+                // Link to contact if provided
+                if (!string.IsNullOrWhiteSpace(model.ContactId))
+                {
+                    if (!Guid.TryParse(model.ContactId, out Guid contactGuid))
+                        return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("Invalid ContactId format."));
+
+                    // Duplicate check: feedback already for same contact + reference?
+                    var dupQuery = new QueryExpression("new_communicationsatisfactionsurvey")
+                    {
+                        ColumnSet = new ColumnSet("new_communicationsatisfactionsurveyid"),
+                        Criteria =
+                        {
+                            Filters =
+                            {
+                                new FilterExpression
+                                {
+                                    FilterOperator = LogicalOperator.And,
+                                    Conditions =
+                                    {
+                                        new ConditionExpression("new_communicationsatisfactionsurvey_contact", ConditionOperator.Equal, contactGuid),
+                                        // if you want to ensure unique per referenceRecordId, you can add condition below (requires storing reference on survey)
+                                        // new ConditionExpression("new_communicationsatisfactionsurvey_reference", ConditionOperator.Equal, new Guid(model.ReferenceRecordId))
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    if (service.RetrieveMultiple(dupQuery).Entities.Any())
+                        return Content(HttpStatusCode.Conflict, ApiResponse<object>.Error("Feedback already submitted for this contact."));
+
+                   //survey["new_communicationsatisfactionsurvey_contact"] = new EntityReference("contact", contactGuid);
+                    linkedVia = "Contact";
+                }
+                // Link to account if provided
+                else if (!string.IsNullOrWhiteSpace(model.AccountId))
+                {
+                    if (!Guid.TryParse(model.AccountId, out Guid accountGuid))
+                        return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("Invalid AccountId format."));
+
+                    //// Duplicate check for account (similar logic)
+                    //var dupQueryAcc = new QueryExpression("new_communicationsatisfactionsurvey")
+                    //{
+                    //    ColumnSet = new ColumnSet("new_communicationsatisfactionsurveyid"),
+                    //    Criteria =
+                    //    {
+                    //        Filters =
+                    //        {
+                    //            new FilterExpression
+                    //            {
+                    //                FilterOperator = LogicalOperator.And,
+                    //                Conditions =
+                    //                {
+                    //                    new ConditionExpression("new_communicationsatisfactionsurvey_account", ConditionOperator.Equal, accountGuid)
+                    //                }
+                    //            }
+                    //        }
+                    //    }
+                    //};
+
+                    //if (service.RetrieveMultiple(dupQueryAcc).Entities.Any())
+                    //    return Content(HttpStatusCode.Conflict, ApiResponse<object>.Error("Feedback already submitted for this account."));
+
+                  //  survey["new_communicationsatisfactionsurvey_account"] = new EntityReference("account", accountGuid);
+                    linkedVia = "Account";
+                }
+
+                // Link to the keyinvestorscommunication record (required)
+                if (!Guid.TryParse(model.ReferenceRecordId, out Guid refGuid))
+                {
+                    return Content(HttpStatusCode.BadRequest, ApiResponse<object>.Error("Invalid ReferenceRecordId format."));
+                }
+
+                // store the link on survey entity - adjust logical name as per your CRM schema
+                survey["new_keyinvestorcommunication"] = new EntityReference("new_keyinvestorscommunication", refGuid);
+
+
+                // Map rating fields (option set values)
+                if (model.OverallSatisfaction >= 1 && model.OverallSatisfaction <= 5)
+                    survey["new_overallhowsatisfiedareyouwithyourexperien"] = new OptionSetValue(model.OverallSatisfaction);
+
+                if (model.Responsiveness >= 1 && model.Responsiveness <= 5)
+                    survey["new_howsatisfiedareyouwiththeresponsivenessof"] = new OptionSetValue(model.Responsiveness);
+
+                if (model.Professionalism >= 1 && model.Professionalism <= 5)
+                    survey["new_howsatisfiedareyouwiththeprofessionalismo"] = new OptionSetValue(model.Professionalism);
+
+                if (model.SolutionProvided >= 1 && model.SolutionProvided <= 5)
+                    survey["new_howsatisfiedareyouwiththesolutionprovided"] = new OptionSetValue(model.SolutionProvided);
+
+                // Comments
+                if (!string.IsNullOrWhiteSpace(model.Comments))
+                    survey["new_doyouhaveanysuggestionsandoradditionalcom"] = model.Comments.Trim();
+
+                // Optional: owner assignment
+                if (!string.IsNullOrWhiteSpace(model.OwnerId) && Guid.TryParse(model.OwnerId, out Guid ownerGuid))
+                {
+                    // Set owner to systemuser by default; modify if you need to support team owners
+                    survey["ownerid"] = new EntityReference("systemuser", ownerGuid); 
+                }
+
+                var createdId = service.Create(survey);
+
+                return Ok(ApiResponse<object>.Success(new
+                {
+                    SurveyId = createdId,
+                    LinkedVia = linkedVia
+                }, "Feedback submitted successfully"));
+            }
+            catch (Exception ex)
+            {
+                return Content(HttpStatusCode.InternalServerError, ApiResponse<object>.Error($"CRM error: {ex.Message}"));
+            }
+        }
+   
+
+        // ===================== Helper: Only validate integers, no KI prefix, no padding =====================
+        private string NormalizeTicketNumber(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            var cleaned = raw.Trim();
+
+            // allow ONLY digits (any length)
+            if (System.Text.RegularExpressions.Regex.IsMatch(cleaned, @"^\d+$"))
+                return cleaned;
+
+            return null;
+        }
     }
 }
-
