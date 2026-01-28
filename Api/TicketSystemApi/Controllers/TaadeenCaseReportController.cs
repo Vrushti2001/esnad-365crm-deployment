@@ -204,7 +204,7 @@ namespace TicketSystemApi.Controllers
         }
 
         // =========================================================
-        // HELPERS
+        // HELPERS for ksa
         // =========================================================
         private string ToKsa(DateTime? utc)
         {
