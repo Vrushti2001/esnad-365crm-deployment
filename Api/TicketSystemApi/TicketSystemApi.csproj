@@ -255,6 +255,7 @@
     <Compile Include="Controllers\CustomerController.cs" />
     <Compile Include="Controllers\CustomerTicketController.cs" />
     <Compile Include="Controllers\HomeController.cs" />
+    <Compile Include="Controllers\TaadeenCaseReportController.cs" />
     <Compile Include="Controllers\ValuesController.cs" />
     <Compile Include="Controllers\VisitorsController.cs" />
     <Compile Include="CrmHelper.cs" />
@@ -267,6 +268,7 @@
     <Compile Include="Models\CustomerWithTicketsDto.cs" />
     <Compile Include="Models\KeyInvestorFeedbackModel.cs" />
     <Compile Include="Models\KICustomerFeedbackModel.cs" />
+    <Compile Include="Models\TaadeenCaseReportModels.cs" />
     <Compile Include="Models\VisitorDto.cs" />
     <Compile Include="Models\VisitorFeedbackModel.cs" />
     <Compile Include="Models\CustomerFeedbackModel.cs" />
@@ -348,6 +350,7 @@
     <Folder Include="Views\Contact\" />
     <Folder Include="Views\CustomerTicket\" />
     <Folder Include="Views\Customer\" />
+    <Folder Include="Views\TaadeenCaseReport\" />
     <Folder Include="Views\Visitors\" />
   </ItemGroup>
   <ItemGroup>
