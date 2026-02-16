@@ -252,6 +252,8 @@
     <Compile Include="Controllers\CaseController.cs" />
     <Compile Include="Controllers\CaseReportController.cs" />
     <Compile Include="Controllers\ContactController.cs" />
+    <Compile Include="Controllers\CreateCaseController.cs" />
+    <Compile Include="Controllers\CreateCaseThroughChatbotController.cs" />
     <Compile Include="Controllers\CustomerController.cs" />
     <Compile Include="Controllers\CustomerTicketController.cs" />
     <Compile Include="Controllers\HomeController.cs" />
@@ -265,6 +267,8 @@
     <Compile Include="Models\ApiResponse.cs" />
     <Compile Include="Models\CaseRequestModel.cs" />
     <Compile Include="Models\ContactDto.cs" />
+    <Compile Include="Models\CreateCaseRequest.cs" />
+    <Compile Include="Models\CreateCaseResponseModel.cs" />
     <Compile Include="Models\CustomerWithTicketsDto.cs" />
     <Compile Include="Models\KeyInvestorFeedbackModel.cs" />
     <Compile Include="Models\KICustomerFeedbackModel.cs" />
@@ -316,6 +320,7 @@
     <Content Include="Areas\HelpPage\Views\Help\DisplayTemplates\HelpPageApiModel.cshtml" />
     <Content Include="Areas\HelpPage\Views\Help\DisplayTemplates\ApiGroup.cshtml" />
     <Content Include="Areas\HelpPage\Views\Help\Api.cshtml" />
+    <Content Include="ClassDiagram1.cd" />
     <None Include="Properties\PublishProfiles\api-crm-esnad - FTP.pubxml" />
     <None Include="Properties\PublishProfiles\api-crm-esnad - FTP1.pubxml" />
     <None Include="Properties\PublishProfiles\api-crm-esnad - Web Deploy.pubxml" />
